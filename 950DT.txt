@@ -1,0 +1,115 @@
+DrMAS 在 Ascend 950DT 上的四卡训练说明
+
+1. 环境和代码
+
+四卡训练使用的基础镜像为
+quay.io/ascend/verl:v0.9.1-cann9.1.0-torch_npu2.10.0.post4-950-ubuntu22.04-py3.12-vllm
+实际环境为 aarch64、Python 3.12.13、驱动 25.1.rc2、CANN 9.1.0、torch 2.10、torch-npu 2.10.0.post4、vLLM 0.23.0+empty、vLLM-Ascend 0.23.0.post2.dev7+gc399628f2。训练使用 DrMAS 仓库内的 verl 0.3.1.dev。
+以下命令约定容器内工作区为 /work。宿主机挂载来源由部署者指定。
+
+首次创建容器（宿主机 Bash）
+先安装与上列环境匹配的 Ascend 驱动及 Docker ascend runtime，确认 npu-smi info 能看到分配的四张卡。以下以获分配设备 0、1、2、3 为例。工作区、模型和 wheel 由复现者提供。
+  image=quay.io/ascend/verl:v0.9.1-cann9.1.0-torch_npu2.10.0.post4-950-ubuntu22.04-py3.12-vllm
+  workspace="$HOME/drmas-work"
+  mkdir -p "$workspace/wheels" "$workspace/data/drmas_math"
+  read -r -p "宿主机 Qwen3-4B 权重目录（绝对路径）: " model_dir
+  read -r -p "新训练容器名: " container
+  cards=(0 1 2 3)
+  args=()
+  for card in "${cards[@]}"; do args+=(--device "/dev/davinci$card"); done
+  for dev in davinci_manager hisi_hdc ummu uburma; do args+=(--device "/dev/$dev"); done
+  for path in /usr/local/Ascend/driver /usr/local/dcmi /usr/local/bin/npu-smi /etc/ascend_install.info /usr/bin/urma_admin; do args+=(--mount "type=bind,src=$path,dst=$path,readonly"); done
+  docker run -d --name "$container" --runtime=ascend "${args[@]}" --mount "type=bind,src=$workspace,dst=/work" --mount "type=bind,src=$model_dir,dst=/models/Qwen3-4B,readonly" "$image" sleep infinity
+
+将要求的 tensordict wheel 放入宿主机工作区的 wheels 子目录；安装时 pip 会根据依赖清单校验 SHA-256。可从已配置的同款环境分发这一 wheel。进入容器并克隆适配仓库后，将 examples/drmas_trainer/run_math.sh 中 model_ids 的两项都设为 /models/Qwen3-4B。数据预处理在容器内的仓库根目录执行：
+  mkdir -p /work/data/drmas_math
+  python examples/data_preprocess/drmas_math.py --local_dir /work/data/drmas_math
+
+在宿主机查看容器列表，输入自己的训练容器名：
+  docker ps -a --format '{{.Names}}  {{.Status}}'
+  read -r -p "训练容器名: " container
+若容器已停止，先执行 docker start "$container"，然后进入容器：
+  docker exec -it "$container" bash --norc
+
+进入容器后执行：
+  cd /work/DrMAS
+  source /work/venv-verl023/bin/activate
+  export PYTHONPATH="/work/DrMAS${PYTHONPATH:+:$PYTHONPATH}"
+  python -V
+  python -m pip show torch torch-npu vllm vllm-ascend
+  npu-smi info
+
+在同款基础镜像的新工作区重建 Python 环境时，可使用以下命令。先准备好 /work/wheels/tensordict-0.6.2-cp312-cp312-linux_aarch64.whl，并确认设备、驱动和数据目录已挂载。现有容器可直接使用上面的激活命令。
+  cd /work
+  read -r -p "含 950DT 适配的 DrMAS 仓库地址: " repo_url
+  git clone "$repo_url" DrMAS
+  cd DrMAS
+  python3 -m venv --system-site-packages /work/venv-verl023
+  source /work/venv-verl023/bin/activate
+  python -m pip install --no-deps -r requirements-npu-vllm.txt
+  export PYTHONPATH="/work/DrMAS${PYTHONPATH:+:$PYTHONPATH}"
+
+2. 模型和数据
+
+Solver 和 Verifier 均从 Qwen3-4B 初始化，各自更新参数。启动前请将训练脚本中的模型路径指向容器可读的 Qwen3-4B 权重目录。
+模型下载：https://huggingface.co/Qwen/Qwen3-4B
+
+用途    本地文件              数据构成
+Train   train.parquet         DAPO-Math（aaabiao/dapo_filter），本次预处理得到 13044 条。
+Val     test_sampled.parquet  MATH-500（50 题）+ AIME 2024（30 题）+ AIME 2025（30 题），共 110 题。训练每 10 个 step 验证一次。
+Test    test.parquet          MATH-500、AIME 2024、AIME 2025、AMC 2023、Minerva Math、OlympiadBench，共 1547 题，用于完整评测。
+
+数据集下载地址：
+  DAPO-Math       https://huggingface.co/datasets/aaabiao/dapo_filter
+  MATH-500        https://huggingface.co/datasets/HuggingFaceH4/MATH-500
+  AIME 2024       https://huggingface.co/datasets/HuggingFaceH4/aime_2024
+  AIME 2025       https://huggingface.co/datasets/MathArena/aime_2025
+  AMC 2023        https://huggingface.co/datasets/knoveleng/AMC-23
+  Minerva Math    https://huggingface.co/datasets/zwhe99/simplerl-minerva-math
+  OlympiadBench   https://huggingface.co/datasets/realtreetune/olympiadbench
+
+3. 生成训练、验证和测试数据
+
+上游仓库的调用方式：
+  cd DrMAS
+  python examples/data_preprocess/drmas_math.py
+
+脚本默认输出目录参数为 ~/data/drmas_math。要确保目录存在并由 shell 展开主目录，可在仓库根目录执行：
+  mkdir -p "$HOME/data/drmas_math"
+  python examples/data_preprocess/drmas_math.py --local_dir "$HOME/data/drmas_math"
+
+一次调用生成 train.parquet、test_sampled.parquet 和 test.parquet。上游 run_math.sh 在训练模式下使用：
+  TRAIN_DATA="$HOME/data/drmas_math/train.parquet"
+  VAL_DATA="$HOME/data/drmas_math/test_sampled.parquet"
+
+本仓库的适配脚本读取 /work/data/drmas_math 下同名文件。已有处理结果时可直接训练。需要重新生成时，将 --local_dir 指向 /work/data/drmas_math；提前准备各数据集的下载连接或缓存，重新生成会写入同名文件。可在容器内核对实际行数：
+  python -c 'import glob, pyarrow.parquet as pq; print([(p, pq.ParquetFile(p).metadata.num_rows) for p in sorted(glob.glob("/work/data/drmas_math/*.parquet"))])'
+
+4. 启动四卡训练和续训
+
+在容器内执行，先用 npu-smi info 确认训练使用的四张卡可用。新实验使用新的 run-id，例如：
+  cd /work/DrMAS
+  run_id=math-950dt-01
+  bash examples/drmas_trainer/run_math.sh --run-id "$run_id"
+
+需要后台运行时，改用下面的启动方式：
+  mkdir -p log
+  nohup bash examples/drmas_trainer/run_math.sh --run-id "$run_id" >> "log/$run_id.nohup.log" 2>&1 < /dev/null &
+  tail -f "log/$run_id.nohup.log"
+
+训练配置：group size 8，训练 batch size 32，学习率 1e-6，2 个 epoch，prompt 上限 8192 tokens，response 上限 4096 tokens，Solver–Verifier 最多交互 2 轮。单卡 log-prob 微批次为 4，两个 actor 的单卡更新微批次均为 2。
+
+5. Checkpoint、TensorBoard 和完整评测
+
+在 /work/DrMAS 下设置与训练一致的 run_id，再执行：
+  experiment=drmas_shareFalse_qwen3_4b_qwen3_4b
+  ckpt_dir="/work/DrMAS/checkpoints/DrMAS_math/$experiment/$run_id"
+  tb_dir="/work/DrMAS/tensorboard_log/$experiment/$run_id"
+  ls -lh "$ckpt_dir"
+  ls -lh "$tb_dir"
+
+训练每 10 个 step 保存 checkpoint，配置为只保留最新一份。任务中断后使用同一 run-id 再次启动，可从最新完整 checkpoint 恢复。两次保存之间已完成的 step 需要重跑。同一 run-id 会继续写入同一个 TensorBoard 目录，重启后可能新增事件文件；查看整段曲线时应加载整个目录。
+  tensorboard --logdir "$tb_dir" --host 127.0.0.1 --port 6006
+
+完整评测使用 test.parquet。先确认目标 run-id 的 checkpoint 已保存并结束对应训练，再从仓库根目录启动评测，核对日志中加载的 checkpoint 步数：
+  bash examples/drmas_trainer/run_math.sh eval --run-id "$run_id"
