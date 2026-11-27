@@ -23,7 +23,7 @@ ray==2.49.2
 tensorboard==2.21.0
 tensorboard-data-server==0.7.2
 tensordict @ file:///work/wheels/tensordict-0.6.2-cp312-cp312-linux_aarch64.whl#sha256=c672dbd0ddf45be3a10fda6b0c9e2bcac7a290f1192ece2229cf18eeb85b45b8
-transformers==5.5.4
+transformers==5.20.2
 
 # Selected inherited packages for auditing. All other inherited dependencies come with the image.
 # torch==2.10.0
