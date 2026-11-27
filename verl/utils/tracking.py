@@ -201,7 +201,8 @@ class _TensorboardAdapter:
         tensorboard_dir = os.environ.get("TENSORBOARD_DIR", "tensorboard_log")
         os.makedirs(tensorboard_dir, exist_ok=True)
         print(f"Saving tensorboard log to {tensorboard_dir}.")
-        self.writer = SummaryWriter(tensorboard_dir)
+        purge_step = os.environ.get("DRMAS_TB_PURGE_STEP")
+        self.writer = SummaryWriter(tensorboard_dir, purge_step=int(purge_step) if purge_step is not None else None)
 
     def log(self, data, step):
         for key in data:

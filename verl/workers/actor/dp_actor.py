@@ -41,7 +41,17 @@ from verl.workers.actor import BasePPOActor
 if is_cuda_available:
     from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
 elif is_npu_available:
-    from transformers.integrations.npu_flash_attention import index_first_axis, pad_input, rearrange, unpad_input
+    from einops import rearrange
+    try:
+        from transformers.integrations.npu_flash_attention import index_first_axis, pad_input, unpad_input
+    except ImportError:
+        from transformers.modeling_flash_attention_utils import (
+            _pad_input as pad_input, _unpad_input as unpad_input,
+        )
+
+        def index_first_axis(tensor, indices):
+            # DrMAS passes a flattened token axis; preserve trailing position dimensions.
+            return tensor.index_select(0, indices)
 
 
 __all__ = ["DataParallelPPOActor"]

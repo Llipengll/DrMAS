@@ -39,7 +39,12 @@ from omegaconf import DictConfig, OmegaConf
 from tensordict import TensorDict
 from vllm import LLM, SamplingParams
 from vllm.distributed import parallel_state as vllm_ps
-from vllm.worker.worker_base import WorkerWrapperBase
+try:
+    from vllm.v1.worker.worker_base import WorkerWrapperBase
+except ModuleNotFoundError as exc:
+    if exc.name not in ('vllm.v1', 'vllm.v1.worker', 'vllm.v1.worker.worker_base'):
+        raise
+    from vllm.worker.worker_base import WorkerWrapperBase
 
 from verl import DataProto
 from verl.third_party.vllm import vllm_version
@@ -147,7 +152,14 @@ class vLLMRollout(BaseRollout):
         #    (which can vary across different vLLM versions);
         # - Otherwise it's the desired value we want to explicitly set.
         engine_kwargs = {key: val for key, val in engine_kwargs.items() if val is not None}
-        self.inference_engine = LLM(
+        llm_factory = LLM
+        if config.get("ascend_math_rollout", False):
+            from functools import partial
+            from verl.utils.device import get_torch_device
+            from verl.workers.ascend_vllm import build_engine
+
+            llm_factory = partial(build_engine, LLM, get_torch_device().current_device())
+        self.inference_engine = llm_factory(
             model=model_path,
             enable_sleep_mode=True,
             tensor_parallel_size=tensor_parallel_size,

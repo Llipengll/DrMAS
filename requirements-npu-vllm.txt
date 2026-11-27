@@ -1,0 +1,58 @@
+# DrMAS run_math.sh | Ascend 950DT | Linux aarch64 | Python 3.12.13
+# Required base: quay.io/ascend/verl:v0.9.1-cann9.1.0-torch_npu2.10.0.post4-950-ubuntu22.04-py3.12-vllm
+# Image ID on 003: sha256:71031b6646da0eabfcabe4914766965e421ac05c44859a2554bfe940491d4791
+# Host driver tested: 25.1.rc2. Image provides CANN 9.1.0, HCCL and jq 1.6.
+# Run from /work/DrMAS with this adapted checkout on PYTHONPATH.
+# Local verl declares 0.3.1.dev, DrMAS commit c2f724e plus local Ascend changes.
+# The image's installed verl 0.9.1 has different dependency metadata.
+# vLLM source: 0fc695fc6d1d82e9a5ac6835ac8e4e1c83703665
+# vLLM-Ascend source: c399628f2e5d7ff4905aed32d0efce266eb3bf20
+#
+# Recreate inside the specified image with /work/wheels mounted:
+# python3 -m venv --system-site-packages /work/venv-verl023
+# source /work/venv-verl023/bin/activate
+# cd /work/DrMAS
+# python -m pip install --no-deps -r requirements-npu-vllm.txt -i http://artifactory.intra.xiaojukeji.com/artifactory/api/pypi/pypi/simple --trusted-host artifactory.intra.xiaojukeji.com
+# --no-deps preserves the tested image ABI and the DrMAS-specific package versions.
+# The wheel must be the build compiled for this Torch/Python/architecture.
+#
+# All runtime additions and version overrides relative to the above image:
+markdown==3.11.3
+ml-dtypes==0.5.3
+ray==2.49.2
+tensorboard==2.21.0
+tensorboard-data-server==0.7.2
+tensordict @ file:///work/wheels/tensordict-0.6.2-cp312-cp312-linux_aarch64.whl#sha256=c672dbd0ddf45be3a10fda6b0c9e2bcac7a290f1192ece2229cf18eeb85b45b8
+transformers==5.5.4
+
+# Selected inherited packages for auditing. All other inherited dependencies come with the image.
+# torch==2.10.0
+# torch-npu==2.10.0.post4
+# torchvision==0.25.0
+# torchdata==0.11.0
+# vllm==0.23.0+empty
+# vllm-ascend==0.23.0.post2.dev7+gc399628f2
+# numpy==1.26.4
+# scipy==1.13.1
+# pandas==3.0.6
+# pyarrow==24.0.0
+# datasets==5.2.0
+# accelerate==1.16.0
+# peft==0.22.0
+# safetensors==0.8.0
+# tokenizers==0.22.2
+# huggingface-hub==1.33.0
+# hydra-core==1.3.8
+# omegaconf==2.3.1
+# codetiming==1.4.0
+# dill==0.4.1
+# cloudpickle==3.1.3
+# einops==0.8.2
+# sympy==1.14.0
+# pylatexenc==2.11
+# antlr4-python3-runtime==4.9.3
+# grpcio==1.85.3
+# protobuf==7.36.2
+# wandb==0.31.2
+# mathruler==0.1.0
+# qwen-vl-utils==0.0.14

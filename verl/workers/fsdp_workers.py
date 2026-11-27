@@ -186,7 +186,11 @@ class ActorRolloutRefWorker(Worker):
         from torch import optim
         from torch.distributed.fsdp import CPUOffload, MixedPrecision
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-        from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
+        from transformers import AutoConfig, AutoModelForCausalLM
+        try:
+            from transformers import AutoModelForImageTextToText as VisionLanguageModel
+        except ImportError:
+            from transformers import AutoModelForVision2Seq as VisionLanguageModel
 
         from verl.utils.model import get_generation_config, print_model_size, update_model_config
         from verl.utils.torch_dtypes import PrecisionType
@@ -231,8 +235,8 @@ class ActorRolloutRefWorker(Worker):
 
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            if type(actor_model_config) in AutoModelForVision2Seq._model_mapping.keys():
-                actor_module_class = AutoModelForVision2Seq
+            if type(actor_model_config) in VisionLanguageModel._model_mapping.keys():
+                actor_module_class = VisionLanguageModel
             else:
                 actor_module_class = AutoModelForCausalLM
 
@@ -440,6 +444,7 @@ class ActorRolloutRefWorker(Worker):
             rollout_sharding_manager = FSDPVLLMShardingManager(
                 module=self.actor_module_fsdp,
                 inference_engine=rollout.inference_engine,
+                ascend_math_rollout=self.config.rollout.get("ascend_math_rollout", False),
                 model_config=self.actor_model_config,
                 full_params=full_params,
                 device_mesh=rollout_device_mesh,

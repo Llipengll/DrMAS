@@ -12,11 +12,15 @@ from verl.utils.hdfs_io import copy, makedirs
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--local_dir", default="~/data/drmas_math")
+    parser.add_argument("--train_parquet", help="Local dapo_filter training parquet")
     parser.add_argument("--hdfs_dir", default=None)
 
     args = parser.parse_args()
 
-    train_dataset = datasets.load_dataset("aaabiao/dapo_filter", split="train")
+    if args.train_parquet:
+        train_dataset = datasets.load_dataset("parquet", data_files=args.train_parquet, split="train")
+    else:
+        train_dataset = datasets.load_dataset("aaabiao/dapo_filter", split="train")
     test_dataset_aime24 = datasets.load_dataset("HuggingFaceH4/aime_2024", split="train")
     test_dataset_aime25 = datasets.load_dataset("MathArena/aime_2025", split="train")
     test_dataset_math500 = datasets.load_dataset("HuggingFaceH4/MATH-500", split="test")

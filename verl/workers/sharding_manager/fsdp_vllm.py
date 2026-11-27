@@ -40,7 +40,6 @@ from verl.third_party.vllm import parallel_state as vllm_ps
 from verl.utils.debug import GPUMemoryLogger, log_gpu_memory_usage
 from verl.utils.device import get_torch_device
 from verl.utils.fsdp_utils import fsdp_version, layered_summon_lora_params, load_fsdp_model_to_gpu, offload_fsdp_model_to_cpu
-from verl.utils.torch_functional import check_cuda_is_available
 from verl.utils.vllm_utils import TensorLoRARequest, VLLMHijack, is_version_ge, patch_vllm_moe_model_weight_loader
 
 from .base import BaseShardingManager
@@ -51,7 +50,6 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
 class FSDPVLLMShardingManager(BaseShardingManager):
-    @check_cuda_is_available()
     def __init__(
         self,
         module: FSDP,
@@ -61,14 +59,20 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         device_mesh: DeviceMesh = None,
         offload_param: bool = False,
         load_format: str = 'dummy_hf',
-        layered_summon: bool = True
+        layered_summon: bool = True,
+        ascend_math_rollout: bool = False,
     ):
+        if not ascend_math_rollout and not torch.cuda.is_available():
+            raise RuntimeError("CUDA must be initialized before constructing the vLLM sharding manager")
         self.module = module
         # For AsyncLLM, inference_engine and model_runner are defer intialized in vLLMAsyncRollout.load_model
         self.inference_engine = inference_engine
         # self.model_runner = inference_engine.llm_engine.model_executor.driver_worker.worker.model_runner if inference_engine else None
 
-        if "vllm_v_0_6_3" in str(type(self.inference_engine)) or "vllm_v_0_5_4" in str(type(self.inference_engine)):
+        self.ascend_math_rollout = ascend_math_rollout
+        if ascend_math_rollout:
+            self.model_runner = None
+        elif "vllm_v_0_6_3" in str(type(self.inference_engine)) or "vllm_v_0_5_4" in str(type(self.inference_engine)):
             # vLLM <= v0.6.3
             self.model_runner = self.inference_engine.llm_engine.model_executor.worker.model_runner if self.inference_engine else None
         else:
@@ -107,7 +111,7 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             self.gen_random_states = None
 
         self.base_sync_done: bool = 'dummy' not in load_format
-        if is_version_ge(pkg='vllm', minver='0.7.3'):
+        if not ascend_math_rollout and is_version_ge(pkg='vllm', minver='0.7.3'):
             VLLMHijack.hijack()
 
     @GPUMemoryLogger(role="fsdp vllm sharding_manager", logger=logger)
@@ -260,6 +264,11 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         return data.chunk(chunks=self.tp_size)[self.tp_rank]
 
     def update_params(self, updated_params, peft_config=None):
+        if self.ascend_math_rollout:
+            from verl.workers.ascend_vllm import sync_weights
+
+            sync_weights(self.inference_engine, updated_params)
+            return
         model = self.model_runner.model
         if peft_config:
             if self.base_sync_done:
